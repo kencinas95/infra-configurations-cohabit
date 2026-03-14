@@ -1,0 +1,49 @@
+pipeline {
+
+    agent any
+
+    parameters {
+        choice(
+            name: 'THIS_ENV',
+            choices: ['dev','test', 'qa', 'stage','prod'],
+            description: 'Environment to deploy'
+        )
+    }
+
+    environment {
+        DEPLOY_HOST = "oracle-vm-ip"
+        DEPLOY_USER = "ubuntu"
+        DEPLOY_PATH = "/opt/rentar"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/yourrepo/rentar-infra.git'
+            }
+        }
+
+        stage('Generate TLS') {
+            steps {
+                sh '.scripts/ssl-certs-generator.sh'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sshagent(['oracle-ssh-key']) {
+                    sh """
+                    ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST << EOF
+                        cd $DEPLOY_PATH
+                        git pull
+                        export THIS_ENV=${params.THIS_ENV}
+                        docker compose pull
+                        docker compose up -d --remove-orphans
+                    EOF
+                    """
+                }
+            }
+        }
+    }
+}

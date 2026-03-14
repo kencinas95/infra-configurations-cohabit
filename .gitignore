@@ -1,0 +1,10 @@
+.idea/
+
+# environment secrets
+.env
+*.env
+!.env.enc
+!.env.example
+
+# nginx certs
+deploy/nginx/certs/

@@ -1,0 +1,155 @@
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'VERSION', defaultValue: '1.0.0', description: 'SemVer sin v (ej: 1.2.3)')
+    choice(name: 'TARGET_BRANCH', choices: ['main', 'master'], description: 'Branch principal')
+  }
+
+  environment {
+    // Repo del servicio (AJUSTAR POR JOB)
+    REPO_URL = "git@github.com:TU_USER_O_ORG/rentar.git"
+    REPO_NAME = "rentar"  // usado para llamadas API
+    TAG = "v${VERSION}"
+    RELEASE_BRANCH = "release/release-${VERSION}"
+
+    // Para la API (esperar GitHub Actions)
+    GH_OWNER = "TU_USER_O_ORG"
+    GH_TOKEN = credentials('github-pat')
+
+    // Nombre del workflow file en .github/workflows/
+    // (AJUSTAR: ej docker-release.yml)
+    GH_WORKFLOW_FILE = "docker-release.yml"
+
+    // polling
+    POLL_SECONDS = "10"
+    POLL_MAX_TRIES = "90" // 90*10s = 15 min
+  }
+
+  stages {
+
+    stage('Checkout release branch') {
+      steps {
+        sshagent(['github-ssh-key']) {
+          sh '''
+            set -e
+            rm -rf svc
+            git clone "$REPO_URL" svc
+            cd svc
+            git fetch --all --tags
+            git checkout "$RELEASE_BRANCH"
+          '''
+        }
+      }
+    }
+
+    stage('Build + Tests') {
+      steps {
+        dir('svc') {
+          sh '''
+            set -e
+            # ====== AJUSTAR SEGUN SERVICIO ======
+            # Spring Boot (Maven):
+            # ./mvnw -q -DskipTests=false test
+            # ./mvnw -q package
+
+            # Spring Boot (Gradle):
+            # ./gradlew test
+            # ./gradlew bootJar
+
+            # FastAPI:
+            # python -m venv .venv && . .venv/bin/activate
+            # pip install -r requirements.txt
+            # pytest -q
+
+            echo "Implementar comandos reales acá"
+          '''
+        }
+      }
+    }
+
+    stage('Merge release branch -> main') {
+      steps {
+        sshagent(['github-ssh-key']) {
+          sh '''
+            set -e
+            cd svc
+            git checkout "$TARGET_BRANCH"
+            git pull origin "$TARGET_BRANCH"
+
+            # merge (si querés forzar merge commit, cambiá estrategia)
+            git merge --no-ff "$RELEASE_BRANCH" -m "Merge $RELEASE_BRANCH -> $TARGET_BRANCH"
+
+            git push origin "$TARGET_BRANCH"
+          '''
+        }
+      }
+    }
+
+    stage('Create & Push tag') {
+      steps {
+        sshagent(['github-ssh-key']) {
+          sh '''
+            set -e
+            cd svc
+            git fetch --tags
+
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG ya existe. Abortando."
+              exit 1
+            fi
+
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          '''
+        }
+      }
+    }
+
+    stage('Wait for GitHub Actions (docker build/push)') {
+      steps {
+        sh '''
+          set -e
+
+          # Vamos a buscar el workflow run que corresponde al tag.
+          # GitHub expone workflow runs; filtramos por "head_branch" = refs/tags/vX.Y.Z
+          # A veces head_branch aparece como el nombre del tag, según evento.
+          # Vamos a intentar de forma robusta: buscar runs recientes y matchear head_sha.
+
+          cd svc
+          TAG_SHA="$(git rev-list -n 1 "$TAG")"
+          echo "TAG_SHA=$TAG_SHA"
+
+          tries=0
+          while [ "$tries" -lt "$POLL_MAX_TRIES" ]; do
+            tries=$((tries+1))
+            echo "Polling GitHub Actions... try $tries/$POLL_MAX_TRIES"
+
+            # 1) Traer runs del workflow (últimos 20)
+            resp="$(curl -sS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$GH_OWNER/$REPO_NAME/actions/workflows/$GH_WORKFLOW_FILE/runs?per_page=20")"
+
+            # 2) Encontrar el run cuyo head_sha == TAG_SHA
+            run_id="$(python - << 'PY'
+import json, sys
+data=json.loads(sys.stdin.read())
+runs=data.get("workflow_runs", [])
+tag_sha = open("TAG_SHA.tmp").read().strip()
+for r in runs:
+  if r.get("head_sha") == tag_sha:
+    print(r.get("id"))
+    break
+PY
+            )"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      cleanWs()
+    }
+  }
+}

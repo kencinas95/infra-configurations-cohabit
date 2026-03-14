@@ -1,0 +1,76 @@
+version: "3.9"
+
+name: rentar
+
+services:
+  proxy:
+    build:
+      context: nginx
+      dockerfile: Dockerfile
+    container_name: proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - app
+    networks:
+      - edge
+      - internal
+    restart: unless-stopped
+
+  app:
+    image: rentar/rentar:1.0
+    pull_policy: never
+    hostname: app.internal.rentar.net
+    env_file:
+      - ../env/${THIS_ENV}/cohabit.env
+    expose:
+      - "8080"
+    networks:
+      - internal
+    depends_on:
+      - auth-source
+      # - fss
+    restart: unless-stopped
+
+  auth-source:
+    image: rentar/auth-source:1.0
+    pull_policy: never
+    hostname: auth.internal.rentar.net
+    env_file:
+      - ../env/${THIS_ENV}/auth-source.env
+    networks:
+      - internal
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  # fss:
+  #  image: rentar/fss:latest
+  #  hostname: fss.internal.rentar.net
+  #  env_file:
+  #    - ../env/${THIS_ENV}/file-hosting.env
+  #  networks:
+  #    - internal
+  #  depends_on:
+  #    - mdb
+  #  restart: unless-stopped
+
+  db:
+    image: mongo:7
+    hostname: mdb.internal.rentar.net
+    env_file:
+      - ../env/${THIS_ENV}/mdb.env
+    volumes:
+      - ./dbsetup/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - internal
+    restart: unless-stopped
+
+networks:
+  edge:
+  internal:
+    internal: true
+
+volumes:
+  mdb_data:

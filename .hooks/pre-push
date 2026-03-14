@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "github.hook [pre-push] Encrypting .env files before push..."
+
+if [[ "$REPO_PASSWORD" == "" ]]; then
+  echo "github.hook [pre-push] Missing env var REPO_PASSWORD"
+  echo "github.hook [pre-push] Push abort"
+  exit -1
+fi
+
+.scripts/runme.sh encrypt
+
+echo "github.hook [pre-push] Adding encrypted files..."
+find . -type f -name "*.env.enc" ! -path "*/.git/*" -print0 | xargs -0 git add || true
+
+if ! git diff --cached --quiet; then
+  echo "github.hook [pre-push] Creating commit for encrypted env files..."
+  git commit -m "chore: update encrypted env files" --no-verify
+fi
+
+echo "github.hook [pre-push] Done. Continuing push."
