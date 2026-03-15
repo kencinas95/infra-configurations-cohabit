@@ -2,12 +2,14 @@
 
 set -ea
 
-env_file="../../env/${THIS_ENV}/mdb.env"
+env_file="../../env/$THIS_ENV/mdb.env"
 
 if [[ ! -f "$env_file" ]]; then
   echo "[ERROR] .env file not found: $(realpath $env_file)"
   exit -1
 fi
+
+perl -pi -e 's/\r$//' "$env_file"
 
 source "$env_file"
 
